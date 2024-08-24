@@ -1,0 +1,59 @@
+max by(pod, container)(container_memory_working_set_bytes{pod=~"cilium.*"})
+
+
+az aks create -g mitch-delete-oct24 -n d8cilium --tier standard --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium --pod-cidrs 10.128.0.0/10 --node-vm-size Standard_D8ds_v5 
+az aks nodepool add -g mitch-delete-oct24 --cluster-name d8cilium -n clientpool --vm-sizes "Standard_D32ds_v5" --labels size=large --node-taints client=true:NoSchedule
+
+
+labels=Fortio&url=http%3A%2F%2Floadservice%3A8080&qps=999999&t=10s&n=&c=128&log-errors=on&connection-reuse-range-min=&connection-reuse-range-max=&connection-reuse-range-value=&uniform=on&p=50%2C+75%2C+90%2C+99%2C+99.9&r=0.0001&X=&H=&payload=&runner=http%2Ftcp%2Fudp&resolve=&grpc-ping-delay=0&healthservice=&save=on&timeout=750ms&load=Stop&xMin=&xMax=5&xLog=false&yMin=&yMax=&yLog=false
+
+
+
+max by(pod)(container_memory_working_set_bytes{pod=~"cilium.*"})
+max by(pod)(container_memory_working_set_bytes{pod=~"istio.*"})
+rate(cilium_kubernetes_events_received_total{k8s_app="cilium", equal="false", valid="true"}[1m])
+
+
+helm install cilium cilium/cilium --version 1.16.1 \
+  --namespace kube-system \
+  --set aksbyocni.enabled=true \
+  --set nodeinit.enabled=true \
+  --set encryption.enabled=true \
+  --set encryption.type=ipsec
+
+
+helm upgrade cilium cilium/cilium --version 1.16.1 \
+  --namespace kube-system \
+  --set aksbyocni.enabled=true \
+  --set nodeinit.enabled=true \
+  --set encryption.enabled=true \
+  --set encryption.type=ipsec \
+  --set dnsProxy.enableTransparentMode=true
+
+
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: "rule1"
+spec:
+  endpointSelector:
+    matchLabels:
+      app: service-graph
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: fortio-client
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        - method: "GET"
+          path: "/"
+        - method: "GET"
+          path: "/fortio/"
+
+
+curl 'http://localhost:5554/fortio/run/?labels=Fortio&url=http%3A%2F%2Floadservice%3A8080&qps=50000&t=10s&n=&c=128&log-errors=on&connection-reuse-range-min=&connection-reuse-range-max=&connection-reuse-range-value=&uniform=on&nocatchup=on&p=50%2C+75%2C+90%2C+99%2C+99.9&r=0.0001&X=&H=&payload=&runner=http%2Ftcp%2Fudp&resolve=&grpc-ping-delay=0&healthservice=&json=on&save=on&timeout=750ms&load=Start' > out3.txt
+http://localhost:9090/graph?g0.expr=sum%20by%20(container)%20(container_memory_working_set_bytes%7Bcontainer!%3D%22%22%2Cpod%3D~%22cilium.*%22%7D)&g0.tab=0&g0.display_mode=stacked&g0.show_exemplars=0&g0.range_input=3h&g1.expr=%20sum%20by%20(container)%20(rate%20(container_cpu_usage_seconds_total%7Bcontainer!%3D%22%22%2Cpod%3D~%22cilium.*%22%7D%5B1m%5D))&g1.tab=0&g1.display_mode=stacked&g1.show_exemplars=0&g1.range_input=3h&g2.expr=sum%20by%20(container)%20(container_memory_working_set_bytes%7Bcontainer!%3D%22%22%2C%20namespace%3D%22istio-system%22%7D)&g2.tab=0&g2.display_mode=stacked&g2.show_exemplars=0&g2.range_input=3h&g3.expr=sum%20by%20(container)%20(rate%20(container_cpu_usage_seconds_total%7Bcontainer!%3D%22%22%2C%20namespace%3D%22istio-system%22%7D%5B1m%5D))&g3.tab=0&g3.display_mode=stacked&g3.show_exemplars=0&g3.range_input=1h
